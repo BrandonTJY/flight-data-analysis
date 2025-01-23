@@ -1,0 +1,217 @@
+---
+title: "Programming Coursework Part 2a, 2b"
+author: "Brandon TJY"
+date: "2024-03-24"
+output: html_document
+---
+
+```{r setup}
+library(DBI)
+library(ggplot2)
+library(RSQLite)
+
+# Connect to database
+conn <- dbConnect(RSQLite::SQLite(), "dataverse.db")
+```
+
+2a) What are the best times and days of the week to minimize delays each year?
+
+```{r Average departure delay for each time period of the day in minutes }
+# Query
+q1 <- dbGetQuery(conn,
+"WITH TimeofDay AS (
+    SELECT Year,
+        CASE
+            WHEN Time >= 0 AND Time < 600 THEN 'Night'
+            WHEN Time >= 600 AND Time < 1200 THEN 'Morning'
+            WHEN Time >= 1200 AND Time < 1800 THEN 'Afternoon'
+            WHEN Time >= 1800 AND Time <= 2400 THEN 'Evening'
+            ELSE 'Invalid'
+        END AS TimePeriod, DepDelay
+    FROM
+        (
+        SELECT Year, DepTime AS Time, DepDelay
+        FROM flights
+        WHERE Cancelled = 0 AND Diverted = 0 AND DepDelay > 0
+        ) AS subquery
+)
+SELECT Year, TimePeriod, AVG(DepDelay) AS AvgDepDelay
+FROM TimeofDay
+WHERE TimePeriod != 'Invalid'
+GROUP BY Year, TimePeriod;")
+
+q1$TimePeriod <- factor(q1$TimePeriod, levels = c("Morning", "Afternoon", "Evening", "Night"))
+
+# Plot graph
+ggplot(q1, aes(x = TimePeriod, y = AvgDepDelay, group = Year, color = factor(Year)))+
+  geom_line(show.legend = FALSE) + 
+  geom_point(show.legend = FALSE) +
+  labs(title = "Average Departure Delay per Time Period by Year",
+  x = NULL,
+  y = "Average Departure Delay (minutes)") + 
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5),
+  axis.text.x = element_text(angle = 45, hjust = 1))+ 
+  facet_wrap(~Year, ncol = 5, scales = "free_x")
+```
+
+``` {r Percentage of departure delayed flights for each time period of the day}
+# Query
+q2 <- dbGetQuery(conn,
+"WITH TimeofDay AS (
+    SELECT Year,
+        CASE
+            WHEN Time >= 0 AND Time < 600 THEN 'Night'
+            WHEN Time >= 600 AND Time < 1200 THEN 'Morning'
+            WHEN Time >= 1200 AND Time < 1800 THEN 'Afternoon'
+            WHEN Time >= 1800 AND Time <= 2400 THEN 'Evening'
+            ELSE 'Invalid'
+        END AS TimePeriod, DepDelay
+    FROM
+        (
+        SELECT Year, DepTime AS Time, DepDelay
+        FROM flights
+        WHERE Cancelled = 0 AND Diverted = 0 
+        ) AS subquery
+)
+SELECT Year, TimePeriod, (COUNT(CASE WHEN DepDelay > 0 THEN 1 END) * 100.0 / COUNT(*)) AS PercentDelay
+FROM TimeofDay
+WHERE TimePeriod != 'Invalid'
+GROUP BY Year, TimePeriod;")
+
+q2$TimePeriod <- factor(q2$TimePeriod, levels = c("Morning", "Afternoon", "Evening", "Night"))
+
+# Plot graph
+ggplot(q2, aes(x = TimePeriod, y = PercentDelay, group = Year, color = factor(Year)))+
+  geom_line(show.legend = FALSE) + 
+  geom_point(show.legend = FALSE) +
+  labs(title = "Percentage of flights with Departure Delay per Time Period by Year",
+  x = NULL,
+  y = "% of Flights Delayed") + 
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5),
+  axis.text.x = element_text(angle = 45, hjust = 1))+ 
+  facet_wrap(~Year, ncol = 5, scales = "free_x")
+```
+
+```{r Average delay per day in minutes}
+# Query
+q3 <- dbGetQuery(conn,
+"SELECT Year,
+    CASE
+        WHEN DayofWeek = 1 THEN 'Mon' 
+        WHEN DayofWeek = 2 THEN 'Tue'
+        WHEN DayofWeek = 3 THEN 'Wed'
+        WHEN DayofWeek = 4 THEN 'Thu'
+        WHEN DayofWeek = 5 THEN 'Fri'
+        WHEN DayofWeek = 6 THEN 'Sat'
+        WHEN DayofWeek = 7 THEN 'Sun'
+    END AS DayofWeek,
+    AVG(DepDelay) AS AvgDepDelay
+FROM flights
+WHERE Cancelled = 0 AND Diverted = 0 AND DepDelay > 0
+GROUP BY Year, DayofWeek;")
+
+q3$DayofWeek <- factor(q3$DayofWeek, levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+
+# Plot graph
+ggplot(q3, aes(x = DayofWeek, y = AvgDepDelay, group = Year, color = factor(Year)))+
+  geom_line(show.legend = FALSE) + 
+  geom_point(show.legend = FALSE) +
+  labs(title = "Average Departure Delay per Day by Year",
+  x = NULL,
+  y = "Average Departure Delay (minutes)") + 
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5),
+  axis.text.x = element_text(angle = 45, hjust = 1))+ 
+  facet_wrap(~Year, ncol = 5, scales = "free_x")
+```
+
+```{r Percentage of delayed flights per day}
+# Query
+q4 <- dbGetQuery(conn,
+"SELECT Year,
+    CASE
+        WHEN DayofWeek = 1 THEN 'Mon'
+        WHEN DayofWeek = 2 THEN 'Tue'
+        WHEN DayofWeek = 3 THEN 'Wed'
+        WHEN DayofWeek = 4 THEN 'Thu'
+        WHEN DayofWeek = 5 THEN 'Fri'
+        WHEN DayofWeek = 6 THEN 'Sat'
+        WHEN DayofWeek = 7 THEN 'Sun'
+    END AS DayofWeek,
+    (COUNT(CASE WHEN DepDelay > 0 THEN 1 END) * 100.0 / COUNT(*)) AS PercentDelay
+FROM flights
+WHERE Cancelled = 0 AND Diverted = 0
+GROUP BY Year, DayofWeek;")
+
+q4$DayofWeek <- factor(q4$DayofWeek, levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+
+# Plot graph
+ggplot(q4, aes(x = DayofWeek, y = PercentDelay, group = Year, color = factor(Year)))+
+  geom_line(show.legend = FALSE) + 
+  geom_point(show.legend = FALSE) +
+  labs(title = "Percentage of flights with Departure Delay per Day by Year",
+  x = NULL,
+  y = "% of Flights Delayed") + 
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5),
+  axis.text.x = element_text(angle = 45, hjust = 1))+ 
+  facet_wrap(~Year, ncol = 5, scales = "free_x")
+```
+
+2b) Evaluate whether older planes suffer more delays on a year-to-year basis
+
+```{r Average departure delay in minutes based on plane condition by year}
+# Query
+q5 <- dbGetQuery(conn,
+"SELECT flights.Year,
+    CASE
+        WHEN planes.year <= 1988 THEN 'Old'
+        ELSE 'New'
+    END AS PlaneCondition,
+    AVG(DepDelay) AS AvgDepDelay
+FROM flights LEFT JOIN planes ON flights.TailNum = planes.tailnum
+WHERE planes.year != 'None' AND planes.year != 0 AND planes.year IS NOT NULL AND flights.DepDelay > 0 AND flights.Cancelled = 0 AND flights.Diverted = 0
+GROUP BY flights.Year, PlaneCondition;")
+
+q5$Year <- factor(q5$Year, levels = unique(q5$Year), ordered = TRUE)
+
+# Plot graph
+ggplot(q5, aes(x = Year, y = AvgDepDelay, group = PlaneCondition, color = PlaneCondition)) +
+  geom_line() +
+  geom_point()+
+  labs(title = "Average Departure Delay based on Plane Condition",
+   x = "Year",
+   y = "Average Departure Delay (mins)", color = "PlaneCondition") + theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+  axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r Percentage of delayed flights based on plane condition}
+# Query
+q6 <- dbGetQuery(conn,
+"SELECT flights.Year,
+    CASE
+        WHEN planes.year <= 1988 THEN 'Old'
+        ELSE 'New'
+    END AS PlaneCondition,
+    (COUNT(CASE WHEN DepDelay > 0 THEN 1 END) * 100.0 / COUNT(*)) AS PercentDelay
+FROM flights LEFT JOIN planes ON flights.TailNum = planes.tailnum
+WHERE planes.year != 'None' AND planes.year != 0 AND planes.year IS NOT NULL AND 
+flights.Cancelled = 0 AND flights.Diverted = 0
+GROUP BY flights.Year, PlaneCondition;")
+
+q6$Year <- factor(q6$Year, levels = unique(q6$Year), ordered = TRUE)
+
+# Plot graph
+ggplot(q6, aes(x = Year, y = PercentDelay, group = PlaneCondition, color = PlaneCondition)) +
+  geom_line() +
+  geom_point()+
+  labs(title = "Percentage of Flights with Departure Delay based on Plane Condition",
+   x = "Year",
+   y = "% of Flights Delayed", color = "PlaneCondition") + theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+  axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r close}
+# Close db connection
+dbDisconnect(conn)
+```

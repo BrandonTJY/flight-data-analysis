@@ -1,0 +1,152 @@
+---
+title: "Programming Coursework Part 2c"
+output: html_document
+date: "2024-03-26"
+---
+
+```{r setup}
+library(glmnet)
+library(skimr)
+library(RSQLite)
+library(ggplot2)
+library(caret)
+library(pROC)
+
+# Connect to database
+conn <- dbConnect(RSQLite::SQLite(), "dataverse.db")
+```
+
+```{r}
+# Fetch data of Diverted flights
+diverted <- dbGetQuery(conn,
+"SELECT Year, Month, DayofMonth, CRSDepTime, CRSArrTime, Distance, UniqueCarrier, Origin, Dest, Diverted
+FROM flights
+WHERE Cancelled = 0 AND Diverted = 1 AND Distance != 'NA'")
+```
+
+```{r}
+# Fetch random sample of non diverted flights where row count = diverted flights
+notdiverted <- dbGetQuery(conn,
+"SELECT Year, Month, DayofMonth, CRSDepTime, CRSArrTime, Distance, UniqueCarrier, Origin, Dest, Diverted
+FROM flights
+WHERE Cancelled = 0 AND Diverted = 0 AND Distance != 'NA'
+ORDER BY RANDOM()
+LIMIT (SELECT COUNT(*) FROM flights WHERE Diverted = 1 AND Distance != 'NA')")
+
+# Combine dataframes
+flightsdata <- rbind(diverted, notdiverted)
+str(flightsdata)
+skim(flightsdata)
+```
+
+```{r}
+# Take top 5 most occurring Carriers, Origin, Dest
+topoccur <- lapply(
+  c("UniqueCarrier", "Origin", "Dest"),
+  function(col) names(head(sort(table(flightsdata[[col]]), decreasing = TRUE), 5))
+)
+
+# Columns to encode
+onehotencoding <- c("UniqueCarrier", "Origin", "Dest")
+
+## Perform one-hot encoding for each column
+for (i in seq_along(onehotencoding)) {
+  col <- onehotencoding[i]
+  topvalues <- topoccur[[i]]
+  # Create the one-hot encoded column
+  encodedvalues <- ifelse(flightsdata[[col]] %in% topvalues, 1, 0)
+  flightsdata[paste0("Top5", col)] <- encodedvalues
+}
+
+# Convert relevant variables to factors
+flightsdata$Diverted <- factor(flightsdata$Diverted)
+flightsdata$Top5UniqueCarrier <- factor(flightsdata$Top5UniqueCarrier)
+flightsdata$Top5Origin <- factor(flightsdata$Top5Origin)
+flightsdata$Top5Dest <- factor(flightsdata$Top5Dest)
+
+skim(flightsdata)
+str(flightsdata)
+```
+
+```{r}
+# Split data into training and test sets
+set.seed(110)
+index <- createDataPartition(flightsdata$Diverted, p = 0.7, list = FALSE)
+trainflights <- flightsdata[index, ]
+testflights <- flightsdata[-index, ]
+```
+  
+```{r}
+# Logistics Regression Model
+logreg <- glm(Diverted ~ Year + Month + DayofMonth + CRSDepTime + CRSArrTime + Distance + Top5UniqueCarrier + Top5Origin + Top5Dest, data = trainflights, family = "binomial")
+
+# Predict probabilities for the test set
+probabilities <- predict(logreg, newdata = testflights, type = "response")
+
+# Convert probabilities to class labels
+predictions <- ifelse(probabilities > 0.5, 1, 0)
+
+# True results
+true <- testflights$Diverted
+
+# Accuracy
+Accuracy <- mean(predictions == true)
+
+# Precision
+Precision <- sum(predictions == 1 & true == 1) / sum(predictions == 1)
+
+# Recall
+Recall <- sum(predictions == 1 & true == 1) / sum(true == 1)
+
+# F1 Score
+F1Score <- 2 * (Precision * Recall) / (Precision + Recall)
+
+# AUC
+AUC <- roc(true, probabilities)$auc
+
+# Put results into dataframe
+metrics <- data.frame(
+  Metric = c("Accuracy", "Precision", "F1 Score", "Recall", "AUC"),
+  Value = c(Accuracy, Precision, F1Score, Recall, AUC)
+)
+
+# Print the dataframe
+print(metrics)
+
+summary(logreg)
+```
+
+```{r}
+# Function to get coefficients for each year
+getcoefficients <- function(logregplot) {
+  coefficients <- summary(logregplot)$coefficients
+  coefficients <- coefficients[, "Estimate"]
+  return(coefficients)
+}
+
+# Get coefficients for each year
+yearcoefficients <- lapply(unique(trainflights$Year), function(year) {
+  plotsubset <- subset(trainflights, Year == year)
+  logregplot <- glm(Diverted ~ Year + Month + DayofMonth + CRSDepTime + CRSArrTime + Distance + Top5UniqueCarrier + Top5Origin + Top5Dest, data = plotsubset, family = "binomial")
+  coefficients <- getcoefficients(logregplot)
+  return(data.frame(Year = year, Variables = names(coefficients), Coefficients = coefficients))
+})
+
+# Combine coefficients into a dataframe
+dfcoefficients <- do.call(rbind, yearcoefficients)
+
+# Plot
+ggplot(dfcoefficients, aes(x = Variables, y = Coefficients, group = Year, color = factor(Year))) +
+  geom_line(show.legend = FALSE) +
+  geom_point(show.legend = FALSE) + theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5), 
+    axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs( title = "Coefficients Across Years", x = "Variables", y = "Coefficients") + 
+  facet_wrap(~ Year, ncol = 5, scales = "free_x")
+```
+
+
+```{r close}
+# Close db connection
+dbDisconnect(conn)
+```
